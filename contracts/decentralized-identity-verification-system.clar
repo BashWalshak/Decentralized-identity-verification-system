@@ -69,3 +69,18 @@
         (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
         (asserts! (is-verified user) ERR_NOT_FOUND)
         (ok (map-set user-tiers user tier))))
+
+
+
+;; Add to data maps
+(define-map verification-history (tuple (user principal) (action uint)) uint)
+(define-data-var history-index uint u0)
+
+(define-constant ACTION-REQUEST u1)
+(define-constant ACTION-APPROVE u2)
+(define-constant ACTION-REJECT u3)
+
+(define-public (log-verification-action (user principal) (action uint))
+    (begin
+        (var-set history-index (+ (var-get history-index) u1))
+        (ok (map-set verification-history {user: user, action: action} (var-get history-index)))))
