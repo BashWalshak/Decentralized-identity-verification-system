@@ -56,3 +56,16 @@
 
 
 
+;; Add to data maps
+(define-map user-tiers principal uint)
+
+;; Add constants
+(define-constant TIER-BASIC u1)
+(define-constant TIER-ADVANCED u2)
+(define-constant TIER-PREMIUM u3)
+
+(define-public (set-user-tier (user principal) (tier uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (asserts! (is-verified user) ERR_NOT_FOUND)
+        (ok (map-set user-tiers user tier))))
