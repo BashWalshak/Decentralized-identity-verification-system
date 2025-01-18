@@ -39,7 +39,7 @@
 
 
 
-;; Add to data maps
+;;  maps
 (define-map verification-expiry principal uint)
 
 ;; Add constants
@@ -56,7 +56,7 @@
 
 
 
-;; Add to data maps
+;;  maps
 (define-map user-tiers principal uint)
 
 ;; Add constants
@@ -72,7 +72,7 @@
 
 
 
-;; Add to data maps
+;;  maps
 (define-map verification-history (tuple (user principal) (action uint)) uint)
 (define-data-var history-index uint u0)
 
@@ -87,7 +87,7 @@
 
 
 
-;; Add to data maps
+;;  maps
 (define-map user-profiles 
     principal 
     (tuple 
@@ -102,7 +102,7 @@
 
 
 
-;; Add to data maps
+;;  maps
 (define-map authorized-verifiers principal bool)
 
 (define-public (add-verifier (verifier principal))
@@ -117,7 +117,7 @@
 
 
 
-;; Add to data maps
+;;  maps
 (define-map staked-amounts principal uint)
 (define-constant MINIMUM_STAKE_AMOUNT u1000)
 
@@ -129,7 +129,7 @@
 
 
 
-;; Add to data vars
+;;  vars
 (define-data-var emergency-mode bool false)
 
 (define-public (enable-emergency-mode)
