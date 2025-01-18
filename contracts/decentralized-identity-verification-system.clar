@@ -99,3 +99,18 @@
     (begin
         (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
         (ok (map-set user-profiles tx-sender {name: name, email: email, country: country}))))
+
+
+
+;; Add to data maps
+(define-map authorized-verifiers principal bool)
+
+(define-public (add-verifier (verifier principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (map-set authorized-verifiers verifier true))))
+
+(define-public (remove-verifier (verifier principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (map-delete authorized-verifiers verifier))))
