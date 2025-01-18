@@ -84,3 +84,18 @@
     (begin
         (var-set history-index (+ (var-get history-index) u1))
         (ok (map-set verification-history {user: user, action: action} (var-get history-index)))))
+
+
+
+;; Add to data maps
+(define-map user-profiles 
+    principal 
+    (tuple 
+        (name (string-ascii 50))
+        (email (string-ascii 50))
+        (country (string-ascii 2))))
+
+(define-public (set-profile-data (name (string-ascii 50)) (email (string-ascii 50)) (country (string-ascii 2)))
+    (begin
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (ok (map-set user-profiles tx-sender {name: name, email: email, country: country}))))
