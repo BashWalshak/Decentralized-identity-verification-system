@@ -127,3 +127,18 @@
         (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
         (ok (map-set staked-amounts tx-sender amount))))
 
+
+
+;; Add to data vars
+(define-data-var emergency-mode bool false)
+
+(define-public (enable-emergency-mode)
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (var-set emergency-mode true))))
+
+(define-public (revoke-verification (user principal))
+    (begin
+        (asserts! (var-get emergency-mode) ERR_UNAUTHORIZED)
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (map-delete verified-users user))))
