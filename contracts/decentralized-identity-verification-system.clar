@@ -114,3 +114,16 @@
     (begin
         (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
         (ok (map-delete authorized-verifiers verifier))))
+
+
+
+;; Add to data maps
+(define-map staked-amounts principal uint)
+(define-constant MINIMUM_STAKE_AMOUNT u1000)
+
+(define-public (stake-for-verification (amount uint))
+    (begin
+        (asserts! (>= amount MINIMUM_STAKE_AMOUNT) (err u103))
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        (ok (map-set staked-amounts tx-sender amount))))
+
