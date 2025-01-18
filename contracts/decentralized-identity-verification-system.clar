@@ -36,3 +36,23 @@
 
 (define-read-only (has-pending-request (user principal))
     (default-to false (map-get? verification-requests user)))
+
+
+
+;; Add to data maps
+(define-map verification-expiry principal uint)
+
+;; Add constants
+(define-constant VERIFICATION_VALIDITY_PERIOD u31536000) ;; 1 year in seconds
+
+;; New function to set expiry when approving verification
+(define-public (approve-verification-with-expiry (user principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (asserts! (is-some (map-get? verification-requests user)) ERR_NOT_FOUND)
+        (map-delete verification-requests user)
+        (map-set verification-expiry user (+ block-height VERIFICATION_VALIDITY_PERIOD))
+        (ok (map-set verified-users user true))))
+
+
+
