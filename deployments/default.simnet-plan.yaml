@@ -52,6 +52,6 @@ plan:
         - emulated-contract-publish:
             contract-name: decentralized-identity-verification-system
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: contracts/decentralized-identity-verification-system.clar
+            path: "contracts\\decentralized-identity-verification-system.clar"
             clarity-version: 2
       epoch: "2.5"
