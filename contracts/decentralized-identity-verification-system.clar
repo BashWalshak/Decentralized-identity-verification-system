@@ -287,3 +287,13 @@
     (begin
         (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
         (ok (map-set tier-requirements tier stake-requirement))))
+;; Add new maps and constants
+(define-map verifier-fees principal uint)
+(define-map verifier-ratings principal uint)
+(define-constant MIN_VERIFIER_FEE u100)
+
+(define-public (register-as-verifier (fee uint))
+    (begin
+        (asserts! (>= fee MIN_VERIFIER_FEE) (err u108))
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (ok (map-set verifier-fees tx-sender fee))))
