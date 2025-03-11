@@ -268,3 +268,12 @@
         (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
         (ok (map-set reputation-points user 
             (+ (default-to u0 (map-get? reputation-points user)) points)))))
+;; Add new maps
+(define-map recovery-codes principal (string-ascii 64))
+(define-map recovery-attempts principal uint)
+(define-constant MAX_RECOVERY_ATTEMPTS u3)
+
+(define-public (set-recovery-code (code (string-ascii 64)))
+    (begin
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (ok (map-set recovery-codes tx-sender code))))
