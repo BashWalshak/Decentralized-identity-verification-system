@@ -277,3 +277,13 @@
     (begin
         (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
         (ok (map-set recovery-codes tx-sender code))))
+;; Add new maps and constants
+(define-map tier-requirements uint uint)
+(define-constant TIER-1-STAKE u1000)
+(define-constant TIER-2-STAKE u5000)
+(define-constant TIER-3-STAKE u10000)
+
+(define-public (set-tier-requirement (tier uint) (stake-requirement uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (map-set tier-requirements tier stake-requirement))))
