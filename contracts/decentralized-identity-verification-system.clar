@@ -257,3 +257,14 @@
         (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
         (map-set delegated-verifiers delegate tx-sender)
         (ok (map-set delegation-expiry delegate (+ block-height expiry)))))
+
+;; Add new maps and constants
+(define-map reputation-points principal uint)
+(define-constant POINTS-VERIFICATION u100)
+(define-constant POINTS-ENDORSEMENT u50)
+
+(define-public (award-reputation-points (user principal) (points uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (map-set reputation-points user 
+            (+ (default-to u0 (map-get? reputation-points user)) points)))))
