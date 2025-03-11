@@ -297,3 +297,12 @@
         (asserts! (>= fee MIN_VERIFIER_FEE) (err u108))
         (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
         (ok (map-set verifier-fees tx-sender fee))))
+;; Add new maps and constants
+(define-map challenge-timestamps principal uint)
+(define-map challenge-completions principal uint)
+(define-constant CHALLENGE_INTERVAL u720) ;; 5 days in blocks
+
+(define-public (start-time-challenge)
+    (begin
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (ok (map-set challenge-timestamps tx-sender block-height))))
