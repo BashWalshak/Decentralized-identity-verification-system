@@ -231,3 +231,29 @@
           (total-score (+ base-score verification-bonus stake-bonus)))
         (ok (map-set trust-scores user 
             (if (> total-score MAX_TRUST_SCORE) MAX_TRUST_SCORE total-score)))))
+
+
+;; Add new maps
+(define-map user-badges principal (list 10 uint))
+(define-constant BADGE-EARLY-ADOPTER u1)
+(define-constant BADGE-ACTIVE-VERIFIER u2)
+(define-constant BADGE-TRUSTED-MEMBER u3)
+
+(define-public (award-badge (user principal) (badge-id uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (map-set user-badges user 
+            (unwrap-panic (as-max-len? 
+                (append (default-to (list) (map-get? user-badges user)) badge-id) 
+                u10))))))
+
+
+;; Add new maps
+(define-map delegated-verifiers principal principal)
+(define-map delegation-expiry principal uint)
+
+(define-public (delegate-verification-rights (delegate principal) (expiry uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (map-set delegated-verifiers delegate tx-sender)
+        (ok (map-set delegation-expiry delegate (+ block-height expiry)))))
