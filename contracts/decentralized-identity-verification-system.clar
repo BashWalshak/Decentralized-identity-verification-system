@@ -306,3 +306,13 @@
     (begin
         (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
         (ok (map-set challenge-timestamps tx-sender block-height))))
+;; Add new maps and constants
+(define-map insurance-policies principal uint)
+(define-constant INSURANCE_PREMIUM u500)
+(define-constant INSURANCE_COVERAGE u5000)
+
+(define-public (purchase-insurance)
+    (begin
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (try! (stx-transfer? INSURANCE_PREMIUM tx-sender (as-contract tx-sender)))
+        (ok (map-set insurance-policies tx-sender INSURANCE_COVERAGE))))
