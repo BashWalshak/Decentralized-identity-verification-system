@@ -316,3 +316,185 @@
         (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
         (try! (stx-transfer? INSURANCE_PREMIUM tx-sender (as-contract tx-sender)))
         (ok (map-set insurance-policies tx-sender INSURANCE_COVERAGE))))
+
+
+
+(define-map multi-sig-verification-requests principal (list 5 principal))
+(define-map multi-sig-approvals (tuple (user principal) (verifier principal)) bool)
+(define-constant REQUIRED_APPROVALS u3)
+
+(define-public (request-multi-sig-verification (verifiers (list 5 principal)))
+    (begin
+        (asserts! (is-none (map-get? verified-users tx-sender)) ERR_ALREADY_VERIFIED)
+        (ok (map-set multi-sig-verification-requests tx-sender verifiers))))
+
+(define-public (approve-multi-sig-verification (user principal))
+    (let ((verifiers (default-to (list) (map-get? multi-sig-verification-requests user)))
+          (approval-tuple {user: user, verifier: tx-sender}))
+        (asserts! (is-some (index-of verifiers tx-sender)) ERR_UNAUTHORIZED)
+        (map-set multi-sig-approvals approval-tuple true)
+        (if (>= (count-approvals user verifiers) REQUIRED_APPROVALS)
+            (begin
+                (map-delete multi-sig-verification-requests user)
+                (ok (map-set verified-users user true)))
+            (ok true))))
+
+(define-read-only (count-approvals (user principal) (verifiers (list 5 principal)))
+    (fold count-approval-fold verifiers u0))
+
+(define-private (count-approval-fold (verifier principal) (count uint))
+    (if (default-to false (map-get? multi-sig-approvals {user: tx-sender, verifier: verifier}))
+        (+ count u1)
+        count))
+
+
+
+(define-constant ERR_NOT_EXPIRING_SOON (err u110))
+(define-constant RENEWAL_WINDOW u4320) ;; 30 days in blocks
+
+(define-public (renew-verification)
+    (let ((current-expiry (default-to u0 (map-get? verification-expiry tx-sender))))
+        (asserts! (is-verified tx-sender) ERR_NOT_FOUND)
+        (asserts! (< block-height (+ current-expiry RENEWAL_WINDOW)) ERR_NOT_EXPIRING_SOON)
+        (ok (map-set verification-expiry tx-sender (+ block-height VERIFICATION_VALIDITY_PERIOD)))))
+
+(define-read-only (get-verification-expiry (user principal))
+    (default-to u0 (map-get? verification-expiry user)))
+
+(define-read-only (is-verification-valid (user principal))
+    (and 
+        (is-verified user)
+        (< block-height (default-to u0 (map-get? verification-expiry user)))))
+
+
+
+(define-map staking-start-time principal uint)
+(define-map staking-rewards principal uint)
+(define-constant REWARD_RATE u10) ;; 10 tokens per 1000 blocks
+(define-constant REWARD_PERIOD u1000)
+
+(define-public (stake-with-rewards (amount uint))
+    (begin
+        (asserts! (>= amount MINIMUM_STAKE_AMOUNT) (err u103))
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        (map-set staked-amounts tx-sender amount)
+        (ok (map-set staking-start-time tx-sender block-height))))
+
+(define-public (claim-staking-rewards)
+    (let ((stake-amount (default-to u0 (map-get? staked-amounts tx-sender)))
+          (start-time (default-to block-height (map-get? staking-start-time tx-sender)))
+          (elapsed-periods (/ (- block-height start-time) REWARD_PERIOD))
+          (reward (* (/ (* stake-amount REWARD_RATE) u1000) elapsed-periods)))
+        (asserts! (> stake-amount u0) (err u111))
+        (asserts! (> elapsed-periods u0) (err u112))
+        (map-set staking-start-time tx-sender block-height)
+        (map-set staking-rewards tx-sender (+ (default-to u0 (map-get? staking-rewards tx-sender)) reward))
+        (ok reward)))
+
+(define-public (withdraw-rewards)
+    (let ((rewards (default-to u0 (map-get? staking-rewards tx-sender))))
+        (asserts! (> rewards u0) (err u113))
+        (map-set staking-rewards tx-sender u0)
+        (as-contract (stx-transfer? rewards (as-contract tx-sender) tx-sender))))
+
+
+(define-map marketplace-listings principal 
+    (tuple 
+        (fee uint)
+        (description (string-ascii 100))
+        (active bool)))
+(define-map service-ratings (tuple (provider principal) (client principal)) uint)
+(define-constant MAX_RATING u5)
+
+(define-public (create-marketplace-listing (fee uint) (description (string-ascii 100)))
+    (begin
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (ok (map-set marketplace-listings tx-sender 
+            {fee: fee, description: description, active: true}))))
+
+(define-public (update-listing-status (active bool))
+    (let ((listing (default-to {fee: u0, description: "", active: false} 
+                   (map-get? marketplace-listings tx-sender))))
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (ok (map-set marketplace-listings tx-sender 
+            {fee: (get fee listing), 
+             description: (get description listing), 
+             active: active}))))
+
+(define-public (rate-service-provider (provider principal) (rating uint))
+    (begin
+        (asserts! (<= rating MAX_RATING) (err u114))
+        (ok (map-set service-ratings {provider: provider, client: tx-sender} rating))))
+
+(define-read-only (get-provider-average-rating (provider principal))
+    (default-to u0 (map-get? service-ratings {provider: provider, client: tx-sender})))
+
+
+
+(define-map governance-proposals uint 
+    (tuple 
+        (title (string-ascii 100))
+        (description (string-ascii 500))
+        (proposer principal)
+        (start-block uint)
+        (end-block uint)
+        (executed bool)))
+
+(define-map proposal-votes (tuple (proposal-id uint) (voter principal)) bool)
+(define-data-var proposal-counter uint u0)
+(define-constant VOTING_PERIOD u1440) ;; 10 days in blocks
+(define-constant MIN_STAKE_TO_PROPOSE u5000)
+
+(define-public (create-proposal (title (string-ascii 100)) (description (string-ascii 500)))
+    (let ((proposal-id (+ (var-get proposal-counter) u1)))
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (asserts! (>= (default-to u0 (map-get? staked-amounts tx-sender)) MIN_STAKE_TO_PROPOSE) (err u115))
+        (var-set proposal-counter proposal-id)
+        (ok (map-set governance-proposals proposal-id 
+            {title: title, 
+             description: description, 
+             proposer: tx-sender, 
+             start-block: block-height, 
+             end-block: (+ block-height VOTING_PERIOD), 
+             executed: false}))))
+
+(define-public (vote-on-proposal (proposal-id uint) (support bool))
+    (let ((proposal (default-to 
+                    {title: "", description: "", proposer: tx-sender, 
+                     start-block: u0, end-block: u0, executed: false} 
+                    (map-get? governance-proposals proposal-id))))
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (asserts! (< block-height (get end-block proposal)) (err u116))
+        (ok (map-set proposal-votes {proposal-id: proposal-id, voter: tx-sender} support))))
+
+
+
+(define-map verification-delegates (tuple (owner principal) (delegate principal)) bool)
+(define-map delegate-permissions principal uint)
+(define-constant PERMISSION_APPROVE u1)
+(define-constant PERMISSION_REJECT u2)
+(define-constant PERMISSION_FULL u3)
+
+(define-public (add-verification-delegate (delegate principal) (permissions uint))
+    (begin
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (asserts! (<= permissions PERMISSION_FULL) (err u117))
+        (map-set verification-delegates {owner: tx-sender, delegate: delegate} true)
+        (ok (map-set delegate-permissions delegate permissions))))
+
+(define-public (remove-verification-delegate (delegate principal))
+    (begin
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (ok (map-delete verification-delegates {owner: tx-sender, delegate: delegate}))))
+
+(define-public (delegate-approve-verification (user principal))
+    (let ((owner (var-get contract-owner))
+          (permissions (default-to u0 (map-get? delegate-permissions tx-sender))))
+        (asserts! (default-to false (map-get? verification-delegates {owner: owner, delegate: tx-sender})) ERR_UNAUTHORIZED)
+        (asserts! (or (is-eq permissions PERMISSION_APPROVE) (is-eq permissions PERMISSION_FULL)) ERR_UNAUTHORIZED)
+        (asserts! (is-some (map-get? verification-requests user)) ERR_NOT_FOUND)
+        (map-delete verification-requests user)
+        (ok (map-set verified-users user true))))
+
+
+
