@@ -498,3 +498,52 @@
 
 
 
+(define-non-fungible-token verification-badge uint)
+(define-data-var badge-counter uint u0)
+
+(define-map badge-metadata 
+    uint 
+    (tuple 
+        (name (string-ascii 50))
+        (description (string-ascii 200))
+        (achievement-type uint)))
+
+(define-constant ACHIEVEMENT-VERIFIED u1)
+(define-constant ACHIEVEMENT-TRUSTED u2)
+(define-constant ACHIEVEMENT-PREMIUM u3)
+
+(define-public (mint-verification-badge (achievement-type uint))
+    (let ((badge-id (+ (var-get badge-counter) u1)))
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (asserts! (>= (default-to u0 (map-get? trust-scores tx-sender)) u75) (err u120))
+        (var-set badge-counter badge-id)
+        (try! (nft-mint? verification-badge badge-id tx-sender))
+        (ok (map-set badge-metadata badge-id 
+            {name: "Identity Verified",
+             description: "This user has completed identity verification",
+             achievement-type: achievement-type}))))
+
+(define-read-only (get-badge-metadata (badge-id uint))
+    (map-get? badge-metadata badge-id))
+
+
+
+(define-map staking-pool-shares principal uint)
+(define-data-var total-pool-tokens uint u0)
+(define-data-var rewards-per-block uint u10)
+
+(define-public (join-staking-pool (amount uint))
+    (begin
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (asserts! (>= amount u1000) (err u121))
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        (var-set total-pool-tokens (+ (var-get total-pool-tokens) amount))
+        (ok (map-set staking-pool-shares tx-sender 
+            (+ (default-to u0 (map-get? staking-pool-shares tx-sender)) amount)))))
+
+(define-public (claim-pool-rewards)
+    (let ((user-share (default-to u0 (map-get? staking-pool-shares tx-sender)))
+          (reward-amount (* (/ user-share (var-get total-pool-tokens)) (var-get rewards-per-block))))
+        (asserts! (> user-share u0) (err u122))
+        (try! (as-contract (stx-transfer? reward-amount (as-contract tx-sender) tx-sender)))
+        (ok reward-amount)))
