@@ -547,3 +547,189 @@
         (asserts! (> user-share u0) (err u122))
         (try! (as-contract (stx-transfer? reward-amount (as-contract tx-sender) tx-sender)))
         (ok reward-amount)))
+
+
+
+;; Cross-chain constants
+(define-constant ERR_INVALID_CHAIN (err u200))
+(define-constant ERR_BRIDGE_REQUEST_EXISTS (err u201))
+(define-constant ERR_INVALID_PROOF (err u202))
+(define-constant ERR_CHAIN_NOT_SUPPORTED (err u203))
+(define-constant ERR_BRIDGE_EXPIRED (err u204))
+
+;; Supported chain IDs
+(define-constant CHAIN_ETHEREUM u1)
+(define-constant CHAIN_POLYGON u137)
+(define-constant CHAIN_BSC u56)
+(define-constant CHAIN_AVALANCHE u43114)
+
+;; Bridge configuration
+(define-constant BRIDGE_REQUEST_VALIDITY u2016) ;; 14 days in blocks
+(define-constant BRIDGE_FEE u100)
+
+;; Cross-chain data maps
+(define-map supported-chains uint bool)
+(define-map bridge-requests 
+    (tuple (user principal) (target-chain uint))
+    (tuple 
+        (request-time uint)
+        (proof-hash (buff 32))
+        (status uint)))
+
+(define-map cross-chain-verifications 
+    (tuple (user principal) (chain uint))
+    (tuple 
+        (verified bool)
+        (verification-time uint)
+        (bridge-hash (buff 32))))
+
+(define-map chain-validators uint (list 5 principal))
+(define-map validator-signatures 
+    (tuple (bridge-id (buff 32)) (validator principal))
+    bool)
+
+(define-data-var bridge-nonce uint u0)
+
+;; Bridge status constants
+(define-constant BRIDGE_STATUS_PENDING u1)
+(define-constant BRIDGE_STATUS_VALIDATED u2)
+(define-constant BRIDGE_STATUS_COMPLETED u3)
+(define-constant BRIDGE_STATUS_REJECTED u4)
+
+;; Initialize supported chains
+(define-public (initialize-supported-chains)
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (map-set supported-chains CHAIN_ETHEREUM true)
+        (map-set supported-chains CHAIN_POLYGON true)
+        (map-set supported-chains CHAIN_BSC true)
+        (ok (map-set supported-chains CHAIN_AVALANCHE true))))
+
+;; Add or remove supported chains
+(define-public (update-supported-chain (chain-id-param uint) (supported bool))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (map-set supported-chains chain-id-param supported))))
+
+;; Set validators for a specific chain
+(define-public (set-chain-validators (chain-id-param uint) (validators (list 5 principal)))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (asserts! (default-to false (map-get? supported-chains chain-id-param)) ERR_CHAIN_NOT_SUPPORTED)
+        (ok (map-set chain-validators chain-id-param validators))))
+
+;; Request cross-chain verification bridge
+(define-public (request-cross-chain-bridge (target-chain uint))
+    (let ((bridge-key {user: tx-sender, target-chain: target-chain})
+          (current-nonce (var-get bridge-nonce))
+          (proof-data (concat (unwrap-panic (to-consensus-buff? tx-sender)) 
+                             (unwrap-panic (to-consensus-buff? target-chain))))
+          (proof-hash (sha256 proof-data)))
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (asserts! (default-to false (map-get? supported-chains target-chain)) ERR_CHAIN_NOT_SUPPORTED)
+        (asserts! (is-none (map-get? bridge-requests bridge-key)) ERR_BRIDGE_REQUEST_EXISTS)
+        (try! (stx-transfer? BRIDGE_FEE tx-sender (as-contract tx-sender)))
+        (var-set bridge-nonce (+ current-nonce u1))
+        (ok (map-set bridge-requests bridge-key
+            {request-time: block-height,
+             proof-hash: proof-hash,
+             status: BRIDGE_STATUS_PENDING}))))
+
+;; Validate bridge request by chain validator
+(define-public (validate-bridge-request (user principal) (target-chain uint) (approve bool))
+    (let ((bridge-key {user: user, target-chain: target-chain})
+          (bridge-request (map-get? bridge-requests bridge-key))
+          (validators (default-to (list) (map-get? chain-validators target-chain))))
+        (asserts! (is-some (index-of validators tx-sender)) ERR_UNAUTHORIZED)
+        (asserts! (is-some bridge-request) ERR_NOT_FOUND)
+        (asserts! (< block-height (+ (get request-time (unwrap-panic bridge-request)) BRIDGE_REQUEST_VALIDITY)) ERR_BRIDGE_EXPIRED)
+        (if approve
+            (ok (map-set bridge-requests bridge-key
+                {request-time: (get request-time (unwrap-panic bridge-request)),
+                 proof-hash: (get proof-hash (unwrap-panic bridge-request)),
+                 status: BRIDGE_STATUS_VALIDATED}))
+            (ok (map-set bridge-requests bridge-key
+                {request-time: (get request-time (unwrap-panic bridge-request)),
+                 proof-hash: (get proof-hash (unwrap-panic bridge-request)),
+                 status: BRIDGE_STATUS_REJECTED})))))
+
+;; Complete cross-chain verification
+(define-public (complete-cross-chain-verification (user principal) (target-chain uint) (bridge-hash (buff 32)))
+    (let ((bridge-key {user: user, target-chain: target-chain})
+          (cross-chain-key {user: user, chain: target-chain})
+          (bridge-request (map-get? bridge-requests bridge-key)))
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (asserts! (is-some bridge-request) ERR_NOT_FOUND)
+        (asserts! (is-eq (get status (unwrap-panic bridge-request)) BRIDGE_STATUS_VALIDATED) ERR_UNAUTHORIZED)
+        (map-set bridge-requests bridge-key
+            {request-time: (get request-time (unwrap-panic bridge-request)),
+             proof-hash: (get proof-hash (unwrap-panic bridge-request)),
+             status: BRIDGE_STATUS_COMPLETED})
+        (ok 
+        (map-set cross-chain-verifications cross-chain-key
+            {verified: true,
+             verification-time: block-height,
+             bridge-hash: bridge-hash})
+             
+             )))
+;; Generate verification proof for external use
+(define-public (generate-verification-proof (target-chain uint))
+    (let ((user-verified (is-verified tx-sender))
+          (user-tier (default-to u0 (map-get? user-tiers tx-sender)))
+          (trust-score (default-to u0 (map-get? trust-scores tx-sender)))
+          (proof-data (concat 
+                      (concat (unwrap-panic (to-consensus-buff? tx-sender))
+                              (unwrap-panic (to-consensus-buff? user-verified)))
+                      (concat (unwrap-panic (to-consensus-buff? user-tier))
+                              (unwrap-panic (to-consensus-buff? trust-score)))))
+          (proof-hash (sha256 proof-data)))
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (asserts! (default-to false (map-get? supported-chains target-chain)) ERR_CHAIN_NOT_SUPPORTED)
+        (ok proof-hash)))
+
+;; Verify cross-chain status
+(define-read-only (get-cross-chain-verification (user principal) (chain-id-param uint))
+    (map-get? cross-chain-verifications {user: user, chain: chain-id-param}))
+
+;; Check if chain is supported
+(define-read-only (is-chain-supported (chain-id-param uint))
+    (default-to false (map-get? supported-chains chain-id-param)))
+
+;; Get bridge request status
+(define-read-only (get-bridge-request-status (user principal) (target-chain uint))
+    (map-get? bridge-requests {user: user, target-chain: target-chain}))
+
+;; Get chain validators
+(define-read-only (get-chain-validators (chain-id-param uint))
+    (map-get? chain-validators chain-id-param))
+
+;; Check if user has active bridge requests
+(define-read-only (has-pending-bridge-request (user principal) (target-chain uint))
+    (let ((bridge-request (map-get? bridge-requests {user: user, target-chain: target-chain})))
+        (match bridge-request
+            request (and (< (get status request) BRIDGE_STATUS_COMPLETED)
+                        (< block-height (+ (get request-time request) BRIDGE_REQUEST_VALIDITY)))
+            false)))
+
+;; Revoke cross-chain verification
+(define-public (revoke-cross-chain-verification (user principal) (chain-id-param uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (map-delete cross-chain-verifications {user: user, chain: chain-id-param}))))
+
+;; Emergency pause cross-chain operations
+(define-data-var cross-chain-paused bool false)
+
+(define-public (pause-cross-chain-operations)
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (var-set cross-chain-paused true))))
+
+(define-public (resume-cross-chain-operations)
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (var-set cross-chain-paused false))))
+
+;; Check if cross-chain operations are paused
+(define-read-only (are-cross-chain-operations-paused)
+    (var-get cross-chain-paused))
