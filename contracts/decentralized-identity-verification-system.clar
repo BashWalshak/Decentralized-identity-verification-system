@@ -3,6 +3,43 @@
 (define-constant ERR_ALREADY_VERIFIED (err u101))
 (define-constant ERR_NOT_FOUND (err u102))
 
+
+;; Dynamic Reputation System Constants
+(define-constant ERR_REPUTATION_TOO_LOW (err u300))
+(define-constant ERR_CANNOT_VOUCH_SELF (err u301))
+(define-constant ERR_ALREADY_VOUCHED (err u302))
+(define-constant ERR_VOUCHING_COOLDOWN (err u303))
+(define-constant ERR_INSUFFICIENT_REPUTATION (err u304))
+
+(define-constant REPUTATION_DECAY_PERIOD u2160) ;; 15 days in blocks
+(define-constant VOUCHING_COOLDOWN u720) ;; 5 days in blocks  
+(define-constant MIN_REPUTATION_TO_VOUCH u60)
+(define-constant MAX_REPUTATION_SCORE u1000)
+(define-constant BASE_REPUTATION u100)
+(define-constant VOUCH_VALUE u25)
+(define-constant STAKE_TIME_BONUS_RATE u5) ;; 5 points per 1000 blocks staked
+(define-constant DECAY_AMOUNT u10)
+
+;; Dynamic Reputation Data Maps
+(define-map dynamic-reputation principal uint)
+(define-map reputation-last-update principal uint)
+(define-map peer-vouches (tuple (voucher principal) (target principal)) uint)
+(define-map vouching-history principal uint)
+(define-map reputation-achievements principal (list 10 uint))
+(define-map score-multipliers principal uint) ;; 100 = 1.0x, 150 = 1.5x, etc.
+
+;; Reputation tier thresholds
+(define-constant BRONZE_THRESHOLD u200)
+(define-constant SILVER_THRESHOLD u400)
+(define-constant GOLD_THRESHOLD u700)
+(define-constant PLATINUM_THRESHOLD u900)
+
+;; Achievement constants
+(define-constant ACHIEVEMENT_TRUSTED_MEMBER u10)
+(define-constant ACHIEVEMENT_COMMUNITY_LEADER u11)
+(define-constant ACHIEVEMENT_VETERAN_STAKER u12)
+(define-constant ACHIEVEMENT_REPUTATION_MASTER u13)
+
 ;; Data vars
 (define-data-var contract-owner principal tx-sender)
 
@@ -716,6 +753,121 @@
     (begin
         (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
         (ok (map-delete cross-chain-verifications {user: user, chain: chain-id-param}))))
+
+;; Initialize user's dynamic reputation
+(define-public (initialize-dynamic-reputation)
+    (begin
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (asserts! (is-none (map-get? dynamic-reputation tx-sender)) ERR_ALREADY_VERIFIED)
+        (map-set dynamic-reputation tx-sender BASE_REPUTATION)
+        (ok (map-set reputation-last-update tx-sender block-height))))
+
+;; Peer vouching system
+(define-public (vouch-for-user (target principal))
+    (let ((voucher-reputation (default-to u0 (map-get? dynamic-reputation tx-sender)))
+          (vouch-key {voucher: tx-sender, target: target})
+          (last-vouch-time (default-to u0 (map-get? vouching-history tx-sender))))
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (asserts! (not (is-eq tx-sender target)) ERR_CANNOT_VOUCH_SELF)
+        (asserts! (>= voucher-reputation MIN_REPUTATION_TO_VOUCH) ERR_INSUFFICIENT_REPUTATION)
+        (asserts! (is-none (map-get? peer-vouches vouch-key)) ERR_ALREADY_VOUCHED)
+        (asserts! (>= block-height (+ last-vouch-time VOUCHING_COOLDOWN)) ERR_VOUCHING_COOLDOWN)
+        (map-set peer-vouches vouch-key block-height)
+        (map-set vouching-history tx-sender block-height)
+        (unwrap! (increase-reputation target VOUCH_VALUE) 
+            (err u306)) ;; Handle potential overflow
+        (ok true)))
+
+;; Calculate and update dynamic reputation score
+(define-public (update-dynamic-reputation)
+    (let ((current-reputation (default-to BASE_REPUTATION (map-get? dynamic-reputation tx-sender)))
+          (last-update (default-to block-height (map-get? reputation-last-update tx-sender)))
+          (stake-amount (default-to u0 (map-get? staked-amounts tx-sender)))
+          (stake-start (default-to block-height (map-get? staking-start-time tx-sender)))
+          (periods-elapsed (/ (- block-height last-update) REPUTATION_DECAY_PERIOD))
+          (stake-time-bonus (calculate-stake-time-bonus stake-amount stake-start))
+          (decay-penalty (* periods-elapsed DECAY_AMOUNT))
+          (new-reputation (+ (- current-reputation decay-penalty) stake-time-bonus)))
+        (asserts! (is-verified tx-sender) ERR_UNAUTHORIZED)
+        (map-set reputation-last-update tx-sender block-height)
+        (map-set dynamic-reputation tx-sender 
+            (if (> new-reputation MAX_REPUTATION_SCORE) MAX_REPUTATION_SCORE new-reputation))
+        (unwrap! (check-and-award-achievements) (err u306))
+        (ok new-reputation)))
+
+;; Helper function to calculate stake time bonus
+(define-private (calculate-stake-time-bonus (stake-amount uint) (stake-start uint))
+    (if (> stake-amount u0)
+        (let ((stake-periods (/ (- block-height stake-start) u1000)))
+            (* (/ (* stake-amount STAKE_TIME_BONUS_RATE) u1000) stake-periods))
+        u0))
+
+;; Increase reputation with bounds checking
+(define-private (increase-reputation (user principal) (amount uint))
+    (let ((current-reputation (default-to BASE_REPUTATION (map-get? dynamic-reputation user)))
+          (multiplier (default-to u100 (map-get? score-multipliers user)))
+          (bonus-amount (* amount (/ multiplier u100)))
+          (new-reputation (+ current-reputation bonus-amount)))
+        (ok (map-set dynamic-reputation user 
+            (if (> new-reputation MAX_REPUTATION_SCORE) MAX_REPUTATION_SCORE new-reputation)))))
+
+;; Check and award reputation achievements
+(define-private (check-and-award-achievements)
+    (let ((current-reputation (default-to u0 (map-get? dynamic-reputation tx-sender)))
+          (current-achievements (default-to (list) (map-get? reputation-achievements tx-sender))))
+        (begin
+            (if (and (>= current-reputation GOLD_THRESHOLD) 
+                     (is-none (index-of current-achievements ACHIEVEMENT_TRUSTED_MEMBER)))
+                (map-set reputation-achievements tx-sender 
+                    (unwrap-panic (as-max-len? (append current-achievements ACHIEVEMENT_TRUSTED_MEMBER) u10)))
+                false)
+            (if (and (>= current-reputation PLATINUM_THRESHOLD)
+                     (is-none (index-of current-achievements ACHIEVEMENT_COMMUNITY_LEADER)))
+                (map-set reputation-achievements tx-sender 
+                    (unwrap-panic (as-max-len? (append current-achievements ACHIEVEMENT_COMMUNITY_LEADER) u10)))
+                false)
+            (ok true))))
+
+;; Set reputation multiplier (owner only)
+(define-public (set-reputation-multiplier (user principal) (multiplier uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (asserts! (<= multiplier u300) (err u305)) ;; Max 3x multiplier
+        (ok (map-set score-multipliers user multiplier))))
+
+;; Reputation-based privilege check
+(define-public (perform-high-reputation-action)
+    (let ((user-reputation (default-to u0 (map-get? dynamic-reputation tx-sender))))
+        (asserts! (>= user-reputation SILVER_THRESHOLD) ERR_REPUTATION_TOO_LOW)
+        (ok true)))
+
+;; Read-only functions
+(define-read-only (get-dynamic-reputation (user principal))
+    (default-to u0 (map-get? dynamic-reputation user)))
+
+(define-read-only (get-reputation-tier (user principal))
+    (let ((reputation (default-to u0 (map-get? dynamic-reputation user))))
+        (if (>= reputation PLATINUM_THRESHOLD) u4
+        (if (>= reputation GOLD_THRESHOLD) u3  
+        (if (>= reputation SILVER_THRESHOLD) u2
+        (if (>= reputation BRONZE_THRESHOLD) u1 u0))))))
+
+(define-read-only (has-vouched-for (voucher principal) (target principal))
+    (is-some (map-get? peer-vouches {voucher: voucher, target: target})))
+
+(define-read-only (get-vouching-cooldown-remaining (user principal))
+    (let ((last-vouch (default-to u0 (map-get? vouching-history user))))
+        (if (>= block-height (+ last-vouch VOUCHING_COOLDOWN))
+            u0
+            (- (+ last-vouch VOUCHING_COOLDOWN) block-height))))
+
+(define-read-only (get-reputation-achievements (user principal))
+    (default-to (list) (map-get? reputation-achievements user)))
+
+(define-read-only (calculate-reputation-decay (user principal))
+    (let ((last-update (default-to block-height (map-get? reputation-last-update user)))
+          (periods-elapsed (/ (- block-height last-update) REPUTATION_DECAY_PERIOD)))
+        (* periods-elapsed DECAY_AMOUNT)))
 
 ;; Emergency pause cross-chain operations
 (define-data-var cross-chain-paused bool false)
