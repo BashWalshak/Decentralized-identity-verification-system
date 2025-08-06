@@ -54,4 +54,9 @@ plan:
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
             path: "contracts\\decentralized-identity-verification-system.clar"
             clarity-version: 2
+        - emulated-contract-publish:
+            contract-name: zk-identity-challenge
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: "contracts\\zk-identity-challenge.clar"
+            clarity-version: 2
       epoch: "2.5"
