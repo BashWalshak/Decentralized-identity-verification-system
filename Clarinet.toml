@@ -9,6 +9,15 @@ requirements = []
 path = 'contracts/decentralized-identity-verification-system.clar'
 clarity_version = 2
 epoch = 2.5
+
+[contracts.zk-identity-challenge]
+path = 'contracts/zk-identity-challenge.clar'
+clarity_version = 2
+epoch = 2.5
+[contracts.BiometricVerificationSimulator]
+path = 'contracts/BiometricVerificationSimulator.clar'
+clarity_version = 2
+epoch = 2.5
 [repl.analysis]
 passes = ['check_checker']
 
